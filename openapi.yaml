@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: ParkTrack API
   version: 1.0.0
-  description: 'OpenAPI-спецификация, собранная по MDX-документации ParkTrack API. Базовый путь API: /api/v1.'
+  description: 'OpenAPI-спецификация ParkTrack API. Базовый путь API: /api/v1. Включает административную аналитику, получение
+    произвольных результатов распознавания и безопасную выдачу расшифрованных артефактов детекций из S3.'
 servers:
 - url: https://api.parktrack.live/api/v1
   description: Production
@@ -29,6 +30,9 @@ tags:
   description: Единый реестр источников данных.
 - name: Admin
   description: Административный мониторинг и действия.
+- name: Admin Analytics
+  description: Административная аналитика, результаты распознавания, кадры raw/annotated, YOLOv12 labels и обратная связь
+    по детекциям.
 - name: Weather
   description: Погодные условия камер в разное время.
 - name: System
@@ -200,10 +204,8 @@ paths:
         schema:
           type: boolean
         description: Фильтр по активности.
-      - &id001
-        $ref: '#/components/parameters/Top'
-      - &id002
-        $ref: '#/components/parameters/Offset'
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -211,9 +213,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserListResponse'
-        '401': &id003
+        '401':
           $ref: '#/components/responses/Unauthorized'
-        '403': &id004
+        '403':
           $ref: '#/components/responses/Forbidden'
     post:
       tags:
@@ -326,8 +328,8 @@ paths:
         schema:
           type: boolean
         description: Фильтр по активности.
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -335,8 +337,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PartnerListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags:
       - Partners
@@ -453,8 +457,8 @@ paths:
         required: false
         schema:
           $ref: '#/components/schemas/PartnerRole'
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -611,8 +615,10 @@ paths:
                 - type: array
                   items:
                     $ref: '#/components/schemas/CameraMapItem'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /cameras/new:
@@ -634,19 +640,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CameraIdResponse'
-        '400': &id005
+        '400':
           $ref: '#/components/responses/BadRequest'
-        '401': &id006
+        '401':
           $ref: '#/components/responses/Unauthorized'
-        '403': &id007
+        '403':
           $ref: '#/components/responses/Forbidden'
-        '404': &id008
+        '404':
           $ref: '#/components/responses/NotFound'
-        '409': &id009
+        '409':
           $ref: '#/components/responses/Conflict'
-        '415': &id010
+        '415':
           $ref: '#/components/responses/UnsupportedMediaType'
-        '422': &id011
+        '422':
           $ref: '#/components/responses/ValidationError'
   /cameras/next:
     get:
@@ -742,33 +748,55 @@ paths:
     get:
       tags:
       - Cameras
-      summary: Снапшот камеры
+      summary: Получить live-кадр или кадр выбранной детекции
       operationId: getCameraSnapshot
       parameters:
       - $ref: '#/components/parameters/CameraId'
       - name: annotated
         in: query
         required: false
+        description: Вернуть сохранённый кадр с разметкой.
         schema:
           type: boolean
+          default: false
+      - name: last_detection
+        in: query
+        required: false
+        description: При annotated=false вернуть последний сохранённый raw-кадр вместо live-кадра.
+        schema:
+          type: boolean
+          default: false
       - name: fallback_to_raw
         in: query
         required: false
+        description: При отсутствии annotated разрешить возврат raw для выбранной детекции.
         schema:
           type: boolean
+          default: false
+      - name: detection_run_id
+        in: query
+        required: false
+        description: Выбрать конкретное распознавание этой камеры. При annotated=false возвращается raw.
+        schema:
+          type: integer
+          minimum: 1
+          nullable: true
       responses:
         '200':
-          description: Image
+          description: JPEG live-кадра либо расшифрованного кадра детекции.
+          headers:
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlPrivateNoStore'
+            X-Detection-Run-Id:
+              $ref: '#/components/headers/DetectionRunId'
+            X-Snapshot-Captured-At:
+              $ref: '#/components/headers/SnapshotCapturedAt'
+            X-Snapshot-Variant:
+              $ref: '#/components/headers/SnapshotVariant'
           content:
             image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/webp:
               schema:
                 type: string
                 format: binary
@@ -778,8 +806,17 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+      description: 'Без query-параметров получает новый live-кадр из источника камеры. Для сохранённых результатов загружает
+        зашифрованный объект PTSNAP01 из S3, проверяет AES-256-GCM и расшифровывает JPEG только в памяти API.
+
+
+        Приоритет: detection_run_id → annotated → last_detection → live-кадр.'
   /zones:
     get:
       tags:
@@ -859,8 +896,10 @@ paths:
                 - type: array
                   items:
                     $ref: '#/components/schemas/ZoneMapItem'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /zones/new:
@@ -1039,8 +1078,10 @@ paths:
                 - type: array
                   items:
                     $ref: '#/components/schemas/OccupancyMapItem'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /occupancy/new:
@@ -1062,13 +1103,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObservationIdResponse'
-        '400': *id005
-        '401': *id006
-        '403': *id007
-        '404': *id008
-        '409': *id009
-        '415': *id010
-        '422': *id011
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /occupancy/{observation_id}:
     get:
       tags:
@@ -1224,8 +1272,10 @@ paths:
                 - type: array
                   items:
                     $ref: '#/components/schemas/ForecastMapItem'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
   /forecasts/new:
@@ -1247,13 +1297,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ForecastIdResponse'
-        '400': *id005
-        '401': *id006
-        '403': *id007
-        '404': *id008
-        '409': *id009
-        '415': *id010
-        '422': *id011
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /forecasts/{forecast_id}:
     get:
       tags:
@@ -1406,8 +1463,8 @@ paths:
         required: false
         schema:
           $ref: '#/components/schemas/RouteMode'
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1415,8 +1472,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RouteListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /routing/{route_id}:
     get:
       tags:
@@ -1521,8 +1580,8 @@ paths:
         schema:
           type: boolean
       - $ref: '#/components/parameters/Q'
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1530,8 +1589,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataSourceListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /sources/{source_id}:
     get:
       tags:
@@ -1566,8 +1627,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdminOverview'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /admin/cameras:
     get:
       tags:
@@ -1596,8 +1659,8 @@ paths:
         schema:
           type: boolean
       - $ref: '#/components/parameters/Q'
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1605,8 +1668,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdminCameraListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /admin/cameras/{camera_id}:
     get:
       tags:
@@ -1748,8 +1813,8 @@ paths:
         schema:
           type: string
           format: date-time
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1757,8 +1822,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ZoneListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /admin/zones/{zone_id}/recount:
     post:
       tags:
@@ -1798,8 +1865,8 @@ paths:
         required: false
         schema:
           type: boolean
-      - *id001
-      - *id002
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1807,23 +1874,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /admin/partners:
     get:
       tags:
-        - Admin
+      - Admin
       summary: Административный список партнёров
       operationId: listAdminPartners
       parameters:
-        - $ref: '#/components/parameters/Q'
-        - name: is_active
-          in: query
-          required: false
-          schema:
-            type: boolean
-        - *id001
-        - *id002
+      - $ref: '#/components/parameters/Q'
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - $ref: '#/components/parameters/Top'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: OK
@@ -1831,38 +1900,803 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PartnerListResponse'
-        '401': *id003
-        '403': *id004
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/analytics/summary:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Сводка аналитики
+      operationId: getAnalyticsSummary
+      description: Возвращает сводные показатели занятости, обновлений и confidence за период. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/occupancy-history:
+    get:
+      tags:
+      - Admin Analytics
+      summary: История занятости
+      operationId: getAnalyticsOccupancyHistory
+      description: Возвращает агрегированную историю занятости парковок за период. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: granularity
+        in: query
+        required: false
+        description: Шаг агрегации, например 5m, 1h или 1d.
+        schema:
+          type: string
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OccupancyHistoryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/occupancy-forecast:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Прогноз занятости зоны
+      operationId: getAnalyticsOccupancyForecast
+      description: Возвращает прогноз занятости выбранной зоны. Требуется analytics.view.
+      parameters:
+      - name: zone_id
+        in: query
+        required: true
+        description: Идентификатор парковочной зоны.
+        schema:
+          type: integer
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: forecast_created_at
+        in: query
+        required: false
+        description: Выбрать конкретный выпуск прогноза.
+        schema:
+          type: string
+          format: date-time
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OccupancyForecastResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/observations-rate:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Частота наблюдений
+      operationId: getAnalyticsObservationsRate
+      description: Возвращает количество наблюдений по временным интервалам. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: granularity
+        in: query
+        required: false
+        description: Шаг агрегации.
+        schema:
+          type: string
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationsRateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/confidence:
+    get:
+      tags:
+      - Admin Analytics
+      summary: История confidence
+      operationId: getAnalyticsConfidence
+      description: Возвращает средний, минимальный и максимальный confidence детекций. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: granularity
+        in: query
+        required: false
+        description: Шаг агрегации.
+        schema:
+          type: string
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidenceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/update-frequency:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Частота обновления данных
+      operationId: getAnalyticsUpdateFrequency
+      description: Возвращает интервалы между обновлениями в целом и по зонам. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: granularity
+        in: query
+        required: false
+        description: Шаг агрегации.
+        schema:
+          type: string
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateFrequencyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/detector-health:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Состояние детекторов
+      operationId: getAnalyticsDetectorHealth
+      description: Возвращает состояние распознавания по камерам и зонам. Требуется analytics.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: status
+        in: query
+        required: false
+        description: Фильтр по вычисленному состоянию детектора.
+        schema:
+          type: string
+          enum:
+          - online
+          - stale
+          - offline
+          - no_data
+          - low_confidence
+          - error
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectorHealthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/cameras/{camera_id}/detections:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Распознавания камеры
+      operationId: listCameraDetections
+      description: Возвращает последние результаты распознавания выбранной камеры. Требуется analytics.view.
+      parameters:
+      - $ref: '#/components/parameters/CameraId'
+      - name: from
+        in: query
+        required: false
+        description: Начало периода.
+        schema:
+          type: string
+          format: date-time
+          nullable: true
+      - name: to
+        in: query
+        required: false
+        description: Конец периода.
+        schema:
+          type: string
+          format: date-time
+          nullable: true
+      - name: limit
+        in: query
+        required: false
+        description: Максимальное число результатов.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: status
+        in: query
+        required: false
+        description: Фильтр по статусу распознавания.
+        schema:
+          type: string
+          enum:
+          - success
+          - failed
+          - partial
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionRunListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/detections/{detection_run_id}:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Детали распознавания
+      operationId: getDetectionRun
+      description: Возвращает один результат распознавания и URL доступных артефактов. Требуется analytics.view.
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/detections/{detection_run_id}/snapshot:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Скачать кадр распознавания
+      operationId: getDetectionSnapshot
+      description: Возвращает raw или annotated JPEG конкретного распознавания. API скачивает зашифрованный PTSNAP01 из S3,
+        проверяет AES-256-GCM и расшифровывает его только в памяти. Требуется analytics.view.
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      - name: variant
+        in: query
+        required: false
+        description: Вариант кадра.
+        schema:
+          type: string
+          enum:
+          - raw
+          - annotated
+          default: raw
+      responses:
+        '200':
+          description: Расшифрованный JPEG выбранного распознавания.
+          headers:
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlPrivateNoStore'
+            X-Detection-Run-Id:
+              $ref: '#/components/headers/DetectionRunId'
+            X-Snapshot-Captured-At:
+              $ref: '#/components/headers/SnapshotCapturedAt'
+            X-Snapshot-Variant:
+              $ref: '#/components/headers/SnapshotVariant'
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/analytics/detections/{detection_run_id}/labels:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Скачать YOLOv12 labels
+      operationId: getDetectionLabels
+      description: 'Возвращает расшифрованный labels.txt в формате YOLOv12 detection. Каждая строка: class_id x_center y_center
+        width height; координаты нормализованы. Пустой файл является корректным ответом. Требуется analytics.view.'
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      responses:
+        '200':
+          description: Расшифрованный UTF-8 файл YOLOv12 labels.txt.
+          headers:
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlPrivateNoStore'
+            X-Detection-Run-Id:
+              $ref: '#/components/headers/DetectionRunId'
+            X-Snapshot-Captured-At:
+              $ref: '#/components/headers/SnapshotCapturedAt'
+            X-Snapshot-Variant:
+              $ref: '#/components/headers/SnapshotVariant'
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+              example: '0 0.512500 0.438889 0.125000 0.211111
+
+                '
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/analytics/detections/{detection_run_id}/feedback:
+    post:
+      tags:
+      - Admin Analytics
+      summary: Создать оценку распознавания
+      operationId: createDetectionFeedback
+      description: Создаёт обратную связь по качеству распознавания. Требуется analytics.feedback.create.
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDetectionFeedbackRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateDetectionFeedbackResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags:
+      - Admin Analytics
+      summary: Список оценок распознавания
+      operationId: listDetectionFeedback
+      description: Возвращает обратную связь по распознаванию. Доступно администраторам с analytics.feedback.view.
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionFeedbackListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/detections/{detection_run_id}/feedback/{feedback_id}:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Получить оценку распознавания
+      operationId: getDetectionFeedback
+      description: Возвращает одну запись обратной связи. Доступно администраторам с analytics.feedback.view.
+      parameters:
+      - $ref: '#/components/parameters/DetectionRunId'
+      - $ref: '#/components/parameters/FeedbackId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionFeedback'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /admin/analytics/forecast-quality:
+    get:
+      tags:
+      - Admin Analytics
+      summary: Качество прогнозов
+      operationId: getAnalyticsForecastQuality
+      description: Сравнивает прогнозы с фактическими наблюдениями. Доступно администраторам с admin.forecasts.view.
+      parameters:
+      - name: from
+        in: query
+        required: true
+        description: Начало периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        description: Конец периода включительно.
+        schema:
+          type: string
+          format: date-time
+      - name: partner_id
+        in: query
+        required: false
+        description: Фильтр по партнёру.
+        schema:
+          type: integer
+          nullable: true
+      - name: zone_id
+        in: query
+        required: false
+        description: Фильтр по парковочной зоне.
+        schema:
+          type: integer
+          nullable: true
+      - name: camera_id
+        in: query
+        required: false
+        description: Фильтр по камере.
+        schema:
+          type: integer
+          nullable: true
+      - name: forecast_created_at
+        in: query
+        required: false
+        description: Выбрать конкретный выпуск прогноза.
+        schema:
+          type: string
+          format: date-time
+          nullable: true
+      - name: granularity
+        in: query
+        required: false
+        description: Шаг агрегации.
+        schema:
+          type: string
+          nullable: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastQualityResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /weather:
     get:
       tags:
-        - Weather
+      - Weather
       summary: Список наблюдений погоды
       operationId: listWeather
       parameters:
-        - name: camera_id
-          in: query
-          required: false
-          schema:
-            type: integer
-        - name: from
-          in: query
-          required: false
-          schema:
-            type: string
-            format: date-time
-        - name: to
-          in: query
-          required: false
-          schema:
-            type: string
-            format: date-time
-        - name: latest_only
-          in: query
-          required: false
-          schema:
-            type: boolean
-
+      - name: camera_id
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: latest_only
+        in: query
+        required: false
+        schema:
+          type: boolean
       responses:
         '200':
           description: OK
@@ -1879,33 +2713,32 @@ paths:
   /weather/new:
     post:
       tags:
-        - Weather
+      - Weather
       summary: Новое наблюдение погоды
       operationId: postWeather
       parameters:
-        - name: camera_id
-          in: query
-          required: false
-          schema:
-            type: integer
-        - name: observed_at
-          in: query
-          required: false
-          schema:
-            type: string
-            format: date-time
-        - name: temperature
-          in: query
-          required: false
-          schema:
-            type: float
-        - name: precipitation
-          in: query
-          required: false
-          schema:
-            type: float
-            minimum: 0
-
+      - name: camera_id
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: observed_at
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: temperature
+        in: query
+        required: false
+        schema:
+          type: float
+      - name: precipitation
+        in: query
+        required: false
+        schema:
+          type: float
+          minimum: 0
       responses:
         '200':
           description: OK
@@ -1927,17 +2760,15 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
-
   /weather/{camera_id}/{observed_at}:
     get:
       tags:
-        - Weather
+      - Weather
       summary: Получить наблюдение погоды
       operationId: getWeather
       parameters:
-        - $ref: '#/components/parameters/CameraId'
-        - $ref: '#/components/parameters/ObservedAt'
-
+      - $ref: '#/components/parameters/CameraId'
+      - $ref: '#/components/parameters/ObservedAt'
       responses:
         '200':
           description: OK
@@ -1953,7 +2784,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
-
   /health:
     get:
       tags:
@@ -2091,6 +2921,22 @@ components:
       schema:
         type: integer
       description: Идентификатор источника данных.
+    DetectionRunId:
+      name: detection_run_id
+      in: path
+      required: true
+      description: Идентификатор запуска распознавания (observation_id).
+      schema:
+        type: integer
+        minimum: 1
+    FeedbackId:
+      name: feedback_id
+      in: path
+      required: true
+      description: Идентификатор обратной связи по распознаванию.
+      schema:
+        type: integer
+        minimum: 1
   responses:
     BadRequest:
       description: Bad Request
@@ -2160,6 +3006,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     NoContent:
       description: No Content
+    BadGateway:
+      description: Bad Gateway — зашифрованный артефакт повреждён, подменён или имеет неверный формат.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     ErrorResponse:
       type: object
@@ -2831,7 +3683,7 @@ components:
           items:
             $ref: '#/components/schemas/WeatherObservation'
       required:
-        - items
+      - items
       additionalProperties: false
     WeatherPostResponse:
       type: object
@@ -2843,8 +3695,8 @@ components:
           format: date-time
           nullable: true
       required:
-        - camera_id
-        - observed_at
+      - camera_id
+      - observed_at
       additionalProperties: false
     WeatherObservation:
       type: object
@@ -2860,10 +3712,10 @@ components:
         precipitation:
           type: float
       required:
-        - camera_id
-        - observed_at
-        - temperature
-        - precipitation
+      - camera_id
+      - observed_at
+      - temperature
+      - precipitation
       additionalProperties: false
     Camera:
       type: object
@@ -3843,38 +4695,38 @@ components:
     RouteSearchRequest:
       type: object
       properties:
-        mode: &id012
+        mode:
           $ref: '#/components/schemas/RouteMode'
-        origin: &id013
+        origin:
           $ref: '#/components/schemas/MapPoint'
-        destination: &id014
+        destination:
           $ref: '#/components/schemas/MapPoint'
-        max_pay: &id015
+        max_pay:
           type: integer
           minimum: 0
-        min_free_count: &id016
+        min_free_count:
           type: integer
           minimum: 0
-        min_confidence: &id017
+        min_confidence:
           type: number
           format: double
           minimum: 0
           maximum: 1
-        max_distance_to_destination_meters: &id018
+        max_distance_to_destination_meters:
           type: integer
           minimum: 0
-        max_duration_from_origin_seconds: &id019
+        max_duration_from_origin_seconds:
           type: integer
           minimum: 0
-        include_accessible: &id020
+        include_accessible:
           type: boolean
-        limit: &id021
+        limit:
           type: integer
           minimum: 1
           maximum: 50
-        use_forecast: &id022
+        use_forecast:
           type: boolean
-        provider: &id023
+        provider:
           $ref: '#/components/schemas/RoutingProvider'
       required:
       - mode
@@ -3883,18 +4735,39 @@ components:
     RouteCreateRequest:
       type: object
       properties:
-        mode: *id012
-        origin: *id013
-        destination: *id014
-        max_pay: *id015
-        min_free_count: *id016
-        min_confidence: *id017
-        max_distance_to_destination_meters: *id018
-        max_duration_from_origin_seconds: *id019
-        include_accessible: *id020
-        limit: *id021
-        use_forecast: *id022
-        provider: *id023
+        mode:
+          $ref: '#/components/schemas/RouteMode'
+        origin:
+          $ref: '#/components/schemas/MapPoint'
+        destination:
+          $ref: '#/components/schemas/MapPoint'
+        max_pay:
+          type: integer
+          minimum: 0
+        min_free_count:
+          type: integer
+          minimum: 0
+        min_confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        max_distance_to_destination_meters:
+          type: integer
+          minimum: 0
+        max_duration_from_origin_seconds:
+          type: integer
+          minimum: 0
+        include_accessible:
+          type: boolean
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+        use_forecast:
+          type: boolean
+        provider:
+          $ref: '#/components/schemas/RoutingProvider'
         selected_zone_id:
           type: integer
       required:
@@ -4238,3 +5111,799 @@ components:
       required:
       - api_version
       additionalProperties: false
+    AnalyticsSummary:
+      properties:
+        active_zones_count:
+          type: integer
+          title: Active Zones Count
+        total_capacity:
+          type: integer
+          title: Total Capacity
+        current_occupied_count:
+          type: integer
+          title: Current Occupied Count
+          nullable: true
+        current_free_count:
+          type: integer
+          title: Current Free Count
+          nullable: true
+        avg_occupancy_percent:
+          type: number
+          title: Avg Occupancy Percent
+          nullable: true
+        freshest_update_at:
+          type: string
+          format: date-time
+          title: Freshest Update At
+          nullable: true
+        oldest_update_at:
+          type: string
+          format: date-time
+          title: Oldest Update At
+          nullable: true
+        avg_update_interval_sec:
+          type: number
+          title: Avg Update Interval Sec
+          nullable: true
+        max_update_interval_sec:
+          type: number
+          title: Max Update Interval Sec
+          nullable: true
+        avg_confidence:
+          type: number
+          title: Avg Confidence
+          nullable: true
+      type: object
+      required:
+      - active_zones_count
+      - total_capacity
+      - current_occupied_count
+      - current_free_count
+      - avg_occupancy_percent
+      - freshest_update_at
+      - oldest_update_at
+      - avg_update_interval_sec
+      - max_update_interval_sec
+      - avg_confidence
+      title: AnalyticsSummary
+    OccupancyHistoryPoint:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        zone_id:
+          type: integer
+          title: Zone Id
+        camera_id:
+          type: integer
+          title: Camera Id
+        occupied_count:
+          type: integer
+          title: Occupied Count
+          nullable: true
+        free_count:
+          type: integer
+          title: Free Count
+          nullable: true
+        capacity:
+          type: integer
+          title: Capacity
+        occupancy_percent:
+          type: number
+          title: Occupancy Percent
+          nullable: true
+        confidence_avg:
+          type: number
+          title: Confidence Avg
+          nullable: true
+        observations_count:
+          type: integer
+          title: Observations Count
+      type: object
+      required:
+      - timestamp
+      - zone_id
+      - camera_id
+      - occupied_count
+      - free_count
+      - capacity
+      - occupancy_percent
+      - confidence_avg
+      - observations_count
+      title: OccupancyHistoryPoint
+    OccupancyHistoryResponse:
+      properties:
+        granularity:
+          type: string
+          title: Granularity
+        points:
+          items:
+            $ref: '#/components/schemas/OccupancyHistoryPoint'
+          type: array
+          title: Points
+      type: object
+      required:
+      - granularity
+      - points
+      title: OccupancyHistoryResponse
+    OccupancyForecastPoint:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        zone_id:
+          type: integer
+          title: Zone Id
+        predicted_occupied_count:
+          type: number
+          title: Predicted Occupied Count
+          nullable: true
+        predicted_free_count:
+          type: number
+          title: Predicted Free Count
+          nullable: true
+        predicted_occupancy_percent:
+          type: number
+          title: Predicted Occupancy Percent
+          nullable: true
+        model_version:
+          type: string
+          title: Model Version
+          nullable: true
+        forecast_created_at:
+          type: string
+          format: date-time
+          title: Forecast Created At
+          nullable: true
+      type: object
+      required:
+      - timestamp
+      - zone_id
+      - predicted_occupied_count
+      - predicted_free_count
+      - predicted_occupancy_percent
+      - model_version
+      - forecast_created_at
+      title: OccupancyForecastPoint
+    OccupancyForecastResponse:
+      properties:
+        available:
+          type: boolean
+          title: Available
+        reason:
+          type: string
+          title: Reason
+          nullable: true
+        points:
+          items:
+            $ref: '#/components/schemas/OccupancyForecastPoint'
+          type: array
+          title: Points
+      type: object
+      required:
+      - available
+      - reason
+      - points
+      title: OccupancyForecastResponse
+    ObservationsRatePoint:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        observations_count:
+          type: integer
+          title: Observations Count
+      type: object
+      required:
+      - timestamp
+      - observations_count
+      title: ObservationsRatePoint
+    ObservationsRateResponse:
+      properties:
+        granularity:
+          type: string
+          title: Granularity
+        points:
+          items:
+            $ref: '#/components/schemas/ObservationsRatePoint'
+          type: array
+          title: Points
+      type: object
+      required:
+      - granularity
+      - points
+      title: ObservationsRateResponse
+    ConfidencePoint:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        zone_id:
+          type: integer
+          title: Zone Id
+          nullable: true
+        camera_id:
+          type: integer
+          title: Camera Id
+          nullable: true
+        confidence_avg:
+          type: number
+          title: Confidence Avg
+          nullable: true
+        confidence_min:
+          type: number
+          title: Confidence Min
+          nullable: true
+        confidence_max:
+          type: number
+          title: Confidence Max
+          nullable: true
+        observations_count:
+          type: integer
+          title: Observations Count
+      type: object
+      required:
+      - timestamp
+      - zone_id
+      - camera_id
+      - confidence_avg
+      - confidence_min
+      - confidence_max
+      - observations_count
+      title: ConfidencePoint
+    ConfidenceResponse:
+      properties:
+        granularity:
+          type: string
+          title: Granularity
+        points:
+          items:
+            $ref: '#/components/schemas/ConfidencePoint'
+          type: array
+          title: Points
+      type: object
+      required:
+      - granularity
+      - points
+      title: ConfidenceResponse
+    UpdateFrequencyZone:
+      properties:
+        zone_id:
+          type: integer
+          title: Zone Id
+        camera_id:
+          type: integer
+          title: Camera Id
+        avg_update_interval_sec:
+          type: number
+          title: Avg Update Interval Sec
+          nullable: true
+        max_update_interval_sec:
+          type: number
+          title: Max Update Interval Sec
+          nullable: true
+        last_update_at:
+          type: string
+          format: date-time
+          title: Last Update At
+          nullable: true
+      type: object
+      required:
+      - zone_id
+      - camera_id
+      - avg_update_interval_sec
+      - max_update_interval_sec
+      - last_update_at
+      title: UpdateFrequencyZone
+    UpdateFrequencyResponse:
+      properties:
+        avg_update_interval_sec:
+          type: number
+          title: Avg Update Interval Sec
+          nullable: true
+        max_update_interval_sec:
+          type: number
+          title: Max Update Interval Sec
+          nullable: true
+        freshest_update_at:
+          type: string
+          format: date-time
+          title: Freshest Update At
+          nullable: true
+        oldest_update_at:
+          type: string
+          format: date-time
+          title: Oldest Update At
+          nullable: true
+        by_zone:
+          items:
+            $ref: '#/components/schemas/UpdateFrequencyZone'
+          type: array
+          title: By Zone
+      type: object
+      required:
+      - avg_update_interval_sec
+      - max_update_interval_sec
+      - freshest_update_at
+      - oldest_update_at
+      - by_zone
+      title: UpdateFrequencyResponse
+    DetectorHealthRow:
+      properties:
+        zone_id:
+          type: integer
+          title: Zone Id
+        camera_id:
+          type: integer
+          title: Camera Id
+        camera_title:
+          type: string
+          title: Camera Title
+        capacity:
+          type: integer
+          title: Capacity
+        occupied_count:
+          type: integer
+          title: Occupied Count
+          nullable: true
+        free_count:
+          type: integer
+          title: Free Count
+          nullable: true
+        occupancy_percent:
+          type: number
+          title: Occupancy Percent
+          nullable: true
+        confidence_avg:
+          type: number
+          title: Confidence Avg
+          nullable: true
+        last_update_at:
+          type: string
+          format: date-time
+          title: Last Update At
+          nullable: true
+        sec_ago:
+          type: integer
+          title: Sec Ago
+          nullable: true
+        avg_update_interval_sec:
+          type: number
+          title: Avg Update Interval Sec
+          nullable: true
+        max_update_interval_sec:
+          type: number
+          title: Max Update Interval Sec
+          nullable: true
+        status:
+          type: string
+          enum:
+          - online
+          - stale
+          - offline
+          - no_data
+          - low_confidence
+          - error
+          title: Status
+      type: object
+      required:
+      - zone_id
+      - camera_id
+      - camera_title
+      - capacity
+      - occupied_count
+      - free_count
+      - occupancy_percent
+      - confidence_avg
+      - last_update_at
+      - sec_ago
+      - avg_update_interval_sec
+      - max_update_interval_sec
+      - status
+      title: DetectorHealthRow
+    DetectorHealthResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DetectorHealthRow'
+          type: array
+          title: Items
+      type: object
+      required:
+      - items
+      title: DetectorHealthResponse
+    DetectionRun:
+      properties:
+        detection_run_id:
+          type: integer
+          title: Detection Run Id
+        camera_id:
+          type: integer
+          title: Camera Id
+        zone_id:
+          type: integer
+          title: Zone Id
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          title: Started At
+        finished_at:
+          type: string
+          format: date-time
+          title: Finished At
+          nullable: true
+        status:
+          type: string
+          enum:
+          - success
+          - failed
+          - partial
+          title: Status
+        processing_time_ms:
+          type: integer
+          title: Processing Time Ms
+          nullable: true
+        model_version:
+          type: string
+          title: Model Version
+          nullable: true
+        detected_cars_count:
+          type: integer
+          title: Detected Cars Count
+          nullable: true
+        occupied_count:
+          type: integer
+          title: Occupied Count
+          nullable: true
+        free_count:
+          type: integer
+          title: Free Count
+          nullable: true
+        capacity:
+          type: integer
+          title: Capacity
+          nullable: true
+        confidence_avg:
+          type: number
+          title: Confidence Avg
+          nullable: true
+        error_code:
+          type: string
+          title: Error Code
+          nullable: true
+        error_message:
+          type: string
+          title: Error Message
+          nullable: true
+        has_feedback:
+          type: boolean
+          title: Has Feedback
+        raw_snapshot_url:
+          type: string
+          title: Raw Snapshot Url
+          nullable: true
+          description: Относительный URL API для получения расшифрованного исходного JPEG.
+        annotated_snapshot_url:
+          type: string
+          title: Annotated Snapshot Url
+          nullable: true
+          description: Относительный URL API для получения расшифрованного JPEG с разметкой.
+        yolo_labels_url:
+          type: string
+          title: Yolo Labels Url
+          nullable: true
+          description: Относительный URL API для скачивания расшифрованного YOLOv12 labels.txt.
+      type: object
+      required:
+      - detection_run_id
+      - camera_id
+      - zone_id
+      - started_at
+      - finished_at
+      - status
+      - processing_time_ms
+      - model_version
+      - detected_cars_count
+      - occupied_count
+      - free_count
+      - capacity
+      - confidence_avg
+      - error_code
+      - error_message
+      - has_feedback
+      - raw_snapshot_url
+      - annotated_snapshot_url
+      - yolo_labels_url
+      title: DetectionRun
+      description: Результат одного запуска распознавания камеры.
+      example:
+        detection_run_id: 101
+        camera_id: 3
+        zone_id: 15
+        started_at: '2026-05-31T12:00:00Z'
+        finished_at: '2026-05-31T12:00:01Z'
+        status: success
+        processing_time_ms: 500
+        model_version: v1
+        detected_cars_count: 10
+        occupied_count: 12
+        free_count: 8
+        capacity: 20
+        confidence_avg: 0.87
+        error_code: null
+        error_message: null
+        has_feedback: false
+        raw_snapshot_url: /api/v1/admin/analytics/detections/101/snapshot?variant=raw
+        annotated_snapshot_url: /api/v1/admin/analytics/detections/101/snapshot?variant=annotated
+        yolo_labels_url: /api/v1/admin/analytics/detections/101/labels
+    DetectionRunListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DetectionRun'
+          type: array
+          title: Items
+      type: object
+      required:
+      - items
+      title: DetectionRunListResponse
+    CreateDetectionFeedbackRequest:
+      properties:
+        rating:
+          type: string
+          enum:
+          - correct
+          - partially_correct
+          - incorrect
+          title: Rating
+        expected_occupied_count:
+          type: integer
+          minimum: 0.0
+          title: Expected Occupied Count
+          nullable: true
+        expected_free_count:
+          type: integer
+          minimum: 0.0
+          title: Expected Free Count
+          nullable: true
+        error_type:
+          type: string
+          enum:
+          - false_positive_car
+          - false_negative_car
+          - wrong_zone_assignment
+          - bad_lighting
+          - bad_camera_angle
+          - calibration_problem
+          - other
+          title: Error Type
+          nullable: true
+        comment:
+          type: string
+          title: Comment
+          nullable: true
+      type: object
+      required:
+      - rating
+      title: CreateDetectionFeedbackRequest
+      example:
+        rating: partially_correct
+        expected_occupied_count: 11
+        expected_free_count: 9
+        error_type: false_positive_car
+        comment: Один автомобиль распознан дважды.
+    CreateDetectionFeedbackResponse:
+      properties:
+        feedback_id:
+          type: integer
+          title: Feedback Id
+        detection_run_id:
+          type: integer
+          title: Detection Run Id
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - feedback_id
+      - detection_run_id
+      - created_at
+      title: CreateDetectionFeedbackResponse
+    DetectionFeedback:
+      properties:
+        feedback_id:
+          type: integer
+          title: Feedback Id
+        detection_run_id:
+          type: integer
+          title: Detection Run Id
+        created_by_user_id:
+          type: integer
+          title: Created By User Id
+        created_by_email:
+          type: string
+          title: Created By Email
+          nullable: true
+        rating:
+          type: string
+          enum:
+          - correct
+          - partially_correct
+          - incorrect
+          title: Rating
+        expected_occupied_count:
+          type: integer
+          title: Expected Occupied Count
+          nullable: true
+        expected_free_count:
+          type: integer
+          title: Expected Free Count
+          nullable: true
+        error_type:
+          type: string
+          enum:
+          - false_positive_car
+          - false_negative_car
+          - wrong_zone_assignment
+          - bad_lighting
+          - bad_camera_angle
+          - calibration_problem
+          - other
+          title: Error Type
+          nullable: true
+        comment:
+          type: string
+          title: Comment
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+          nullable: true
+      type: object
+      required:
+      - feedback_id
+      - detection_run_id
+      - created_by_user_id
+      - created_by_email
+      - rating
+      - expected_occupied_count
+      - expected_free_count
+      - error_type
+      - comment
+      - created_at
+      - updated_at
+      title: DetectionFeedback
+    DetectionFeedbackListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DetectionFeedback'
+          type: array
+          title: Items
+      type: object
+      required:
+      - items
+      title: DetectionFeedbackListResponse
+    ForecastQualityPoint:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        zone_id:
+          type: integer
+          title: Zone Id
+        actual_occupied_count:
+          type: integer
+          title: Actual Occupied Count
+          nullable: true
+        actual_occupancy_percent:
+          type: number
+          title: Actual Occupancy Percent
+          nullable: true
+        predicted_occupied_count:
+          type: number
+          title: Predicted Occupied Count
+          nullable: true
+        predicted_occupancy_percent:
+          type: number
+          title: Predicted Occupancy Percent
+          nullable: true
+        absolute_error_occupancy_percent:
+          type: number
+          title: Absolute Error Occupancy Percent
+          nullable: true
+      type: object
+      required:
+      - timestamp
+      - zone_id
+      - actual_occupied_count
+      - actual_occupancy_percent
+      - predicted_occupied_count
+      - predicted_occupancy_percent
+      - absolute_error_occupancy_percent
+      title: ForecastQualityPoint
+    ForecastQualityMetrics:
+      properties:
+        mae_occupied_count:
+          type: number
+          title: Mae Occupied Count
+          nullable: true
+        mae_occupancy_percent:
+          type: number
+          title: Mae Occupancy Percent
+          nullable: true
+        bias_occupancy_percent:
+          type: number
+          title: Bias Occupancy Percent
+          nullable: true
+        points_count:
+          type: integer
+          title: Points Count
+      type: object
+      required:
+      - mae_occupied_count
+      - mae_occupancy_percent
+      - bias_occupancy_percent
+      - points_count
+      title: ForecastQualityMetrics
+    ForecastQualityResponse:
+      properties:
+        granularity:
+          type: string
+          title: Granularity
+        metrics:
+          $ref: '#/components/schemas/ForecastQualityMetrics'
+        points:
+          items:
+            $ref: '#/components/schemas/ForecastQualityPoint'
+          type: array
+          title: Points
+      type: object
+      required:
+      - granularity
+      - metrics
+      - points
+      title: ForecastQualityResponse
+  headers:
+    ContentDisposition:
+      description: inline для JPEG или attachment для YOLO labels; содержит имя файла.
+      schema:
+        type: string
+      example: inline; filename="annotated.jpg"
+    CacheControlPrivateNoStore:
+      description: Запрещает публичное и локальное кеширование расшифрованного артефакта.
+      schema:
+        type: string
+        enum:
+        - private, no-store
+    DetectionRunId:
+      description: Идентификатор распознавания, которому принадлежит артефакт.
+      schema:
+        type: integer
+      example: 101
+    SnapshotCapturedAt:
+      description: Время кадра из проверенного заголовка контейнера PTSNAP01.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-07-22T08:09:10.123456Z'
+    SnapshotVariant:
+      description: Фактически возвращённый вариант артефакта.
+      schema:
+        type: string
+        enum:
+        - raw
+        - annotated
+        - labels
