@@ -5,7 +5,7 @@ info:
   description: 'OpenAPI-спецификация ParkTrack API. Базовый путь API: /api/v1. Включает административную аналитику, получение
     произвольных результатов распознавания и безопасную выдачу расшифрованных артефактов детекций из S3.'
 servers:
-- url: https://api.parktrack.live/api/v1
+- url: https://api.parktrack.app/api/v1
   description: Production
 security:
 - bearerAuth: []
